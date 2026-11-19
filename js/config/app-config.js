@@ -14,7 +14,7 @@ export const APP_CONFIG = Object.freeze({
   DEFAULT_PAGE_SIZE: 20,
 
   // Ganti dua nilai di bawah ini dengan Project URL dan anon public key dari Supabase Anda
-  SUPABASE_URL: 'https://eqcezucscxedgxmuojnb.supabase.co/rest/v1/',
+  SUPABASE_URL: 'https://eqcezucscxedgxmuojnb.supabase.co',
   SUPABASE_ANON_KEY: 'sb_publishable_7EUTCB1oxF4wKgfQ4fIEog_2nVxhOeZ',
 
   STORAGE_BUCKET_PROOFS: 'transaction-proofs'
