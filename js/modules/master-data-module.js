@@ -1,5 +1,5 @@
 /**
- * Modul Data Master (Produk, Pelanggan, Supplier, Gudang, Bank & Metode Pembayaran)
+ * Modul Data Master (Produk & Satuan Utuh, Pelanggan, Supplier, Gudang, Bank & Metode Pembayaran)
  */
 
 import { supabase } from '../config/supabase-client.js';
@@ -21,7 +21,7 @@ export async function renderModule(container, ctx) {
     <div class="page-header">
       <div class="page-header-title">
         <h2>Data Master Operasional</h2>
-        <p>Referensi produk, satuan, pelanggan outlet, supplier principal, gudang, dan rekening kas/bank</p>
+        <p>Referensi produk, satuan karton/galon, pelanggan outlet, supplier, gudang, dan rekening bank</p>
       </div>
     </div>
 
@@ -71,7 +71,7 @@ async function loadTabContent(ctx) {
 }
 
 /* ============================================================================
-   TAB 1: PRODUK & SATUAN
+   TAB 1: PRODUK & SATUAN (TANPA KONVERSI ECERAN — KARTON & GALON PCS)
    ============================================================================ */
 async function renderProductsTab(bodyEl, ctx) {
   const canManage = canPerformAction(ctx.role, 'manage_master_data');
@@ -100,7 +100,7 @@ async function renderProductsTab(bodyEl, ctx) {
             <strong>${escapeHtml(p.name)}</strong>
             <div class="text-muted" style="font-size:0.8rem;">${escapeHtml(p.brand || '-')} • ${escapeHtml(p.category || 'Umum')}</div>
           </td>
-          <td>${escapeHtml(u ? u.name : '-')}</td>
+          <td>${escapeHtml(u ? `${u.name} (${u.code})` : '-')}</td>
           <td class="num font-semibold">${formatRupiah(p.standard_sell_price)}</td>
           <td>${escapeHtml(t ? t.code : 'Non-PPN')}</td>
           <td class="num">${formatNumber(p.min_stock_alert)}</td>
@@ -179,12 +179,16 @@ function openUnitModal(ctx) {
       <div class="grid-2">
         <div class="form-group">
           <label class="form-label" for="unit-code">Kode Satuan <span class="req">*</span></label>
-          <input type="text" id="unit-code" class="form-control" placeholder="Contoh: DUS, GLN, PAK" required />
+          <input type="text" id="unit-code" class="form-control" placeholder="Contoh: DUS, GLN, PCS" required />
         </div>
         <div class="form-group">
           <label class="form-label" for="unit-name">Nama Satuan <span class="req">*</span></label>
-          <input type="text" id="unit-name" class="form-control" placeholder="Contoh: Karton / Dus" required />
+          <input type="text" id="unit-name" class="form-control" placeholder="Contoh: Karton / Galon Pcs" required />
         </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="unit-desc">Keterangan (Opsional)</label>
+        <input type="text" id="unit-desc" class="form-control" placeholder="Contoh: Satuan penjualan per karton utuh" />
       </div>
     `,
     footerHtml: `
@@ -196,17 +200,26 @@ function openUnitModal(ctx) {
       document.getElementById('unit-save')?.addEventListener('click', async () => {
         const code = document.getElementById('unit-code').value.trim().toUpperCase();
         const name = document.getElementById('unit-name').value.trim();
+        const description = document.getElementById('unit-desc').value.trim() || null;
+
         if (!code || !name) {
           showToast('Kode dan nama satuan wajib diisi.', 'warning');
           return;
         }
+
+        const btn = document.getElementById('unit-save');
+        btn.disabled = true;
+
         try {
-          unwrapResponse(await supabase.from('units').insert({ code, name, is_active: true }));
+          unwrapResponse(
+            await supabase.from('units').insert({ code, name, description, is_active: true })
+          );
           closeModal();
           showToast('Satuan baru berhasil disimpan.', 'success');
           await loadTabContent(ctx);
         } catch (err) {
           showToast(err.message, 'danger');
+          btn.disabled = false;
         }
       });
     }
@@ -236,26 +249,26 @@ function openProductModal(product, units, taxCodes, ctx) {
     bodyHtml: `
       <div class="grid-2">
         <div class="form-group">
-          <label class="form-label" for="prod-sku">Kode SKU <span class="req">*</span></label>
-          <input type="text" id="prod-sku" class="form-control" value="${escapeHtml(product?.sku || '')}" placeholder="Contoh: AQ-600ML" required />
+          <label class="form-label" for="prod-sku">Kode SKU</label>
+          <input type="text" id="prod-sku" class="form-control" value="${escapeHtml(product?.sku || '')}" placeholder="Kosongkan untuk kode otomatis" />
         </div>
         <div class="form-group">
           <label class="form-label" for="prod-brand">Merek / Principal</label>
-          <input type="text" id="prod-brand" class="form-control" value="${escapeHtml(product?.brand || '')}" placeholder="Contoh: Aqua, Le Minerale, Mayora" />
+          <input type="text" id="prod-brand" class="form-control" value="${escapeHtml(product?.brand || '')}" placeholder="Contoh: Aqua, Le Minerale, Teh Pucuk" />
         </div>
       </div>
       <div class="form-group">
         <label class="form-label" for="prod-name">Nama Produk Lengkap <span class="req">*</span></label>
-        <input type="text" id="prod-name" class="form-control" value="${escapeHtml(product?.name || '')}" placeholder="Contoh: Aqua Botol 600ml (1 Dus isi 24)" required />
+        <input type="text" id="prod-name" class="form-control" value="${escapeHtml(product?.name || '')}" placeholder="Contoh: Aqua Botol 600ml (Karton) / Aqua Galon 19L" required />
       </div>
       <div class="grid-2">
         <div class="form-group">
-          <label class="form-label" for="prod-unit">Satuan Dasar <span class="req">*</span></label>
+          <label class="form-label" for="prod-unit">Satuan Jual & Stok <span class="req">*</span></label>
           <select id="prod-unit" class="form-control" required>${unitOpts}</select>
         </div>
         <div class="form-group">
           <label class="form-label" for="prod-category">Kategori</label>
-          <input type="text" id="prod-category" class="form-control" value="${escapeHtml(product?.category || '')}" placeholder="Contoh: Air Mineral, Teh, Kopi" />
+          <input type="text" id="prod-category" class="form-control" value="${escapeHtml(product?.category || '')}" placeholder="Contoh: AMDK Botol, AMDK Galon, MBDK" />
         </div>
       </div>
       <div class="grid-3">
@@ -287,20 +300,23 @@ function openProductModal(product, units, taxCodes, ctx) {
     onMount: () => {
       document.getElementById('prod-cancel')?.addEventListener('click', closeModal);
       document.getElementById('prod-save')?.addEventListener('click', async () => {
+        const selectedUnitId = document.getElementById('prod-unit').value;
         const payload = {
           sku: document.getElementById('prod-sku').value.trim().toUpperCase(),
           name: document.getElementById('prod-name').value.trim(),
           brand: document.getElementById('prod-brand').value.trim() || null,
           category: document.getElementById('prod-category').value.trim() || null,
-          base_unit_id: document.getElementById('prod-unit').value,
+          base_unit_id: selectedUnitId,
+          default_sales_unit_id: selectedUnitId,
+          default_purchase_unit_id: selectedUnitId,
           standard_sell_price: Number(document.getElementById('prod-price').value || 0),
           tax_code_id: document.getElementById('prod-tax').value || null,
           min_stock_alert: Number(document.getElementById('prod-min-stock').value || 0),
           is_active: document.getElementById('prod-active').value === 'true'
         };
 
-        if (!payload.sku || !payload.name || !payload.base_unit_id) {
-          showToast('SKU, nama produk, dan satuan dasar wajib diisi.', 'warning');
+        if (!payload.name || !payload.base_unit_id) {
+          showToast('Nama produk dan satuan wajib diisi.', 'warning');
           return;
         }
 
@@ -311,7 +327,9 @@ function openProductModal(product, units, taxCodes, ctx) {
           if (isEdit) {
             unwrapResponse(await supabase.from('products').update(payload).eq('id', product.id));
           } else {
-            unwrapResponse(await supabase.from('products').insert(payload));
+            unwrapResponse(
+              await supabase.from('products').insert({ ...payload, created_by: ctx.user.id })
+            );
           }
           closeModal();
           showToast('Data produk berhasil disimpan.', 'success');
@@ -334,32 +352,34 @@ async function renderCustomersTab(bodyEl, ctx) {
   const customers = unwrapResponse(res) || [];
 
   const rowsHtml = customers
-    .map(
-      (c) => `
-      <tr>
-        <td><strong>${escapeHtml(c.code)}</strong></td>
-        <td>
-          <strong>${escapeHtml(c.name)}</strong>
-          <div class="text-muted" style="font-size:0.8rem;">${escapeHtml(c.address || '-')}</div>
-        </td>
-        <td>${escapeHtml(c.contact_person || '-')} ${c.phone ? '(' + escapeHtml(c.phone) + ')' : ''}</td>
-        <td>${c.default_payment_type === 'credit' ? `Tempo (${c.default_payment_term_days} Hari)` : 'Tunai (COD)'}</td>
-        <td class="num">${formatRupiah(c.credit_limit)}</td>
-        <td>
-          <span class="badge ${c.is_active ? 'badge-success' : 'badge-neutral'}">
-            ${c.is_active ? 'Aktif' : 'Nonaktif'}
-          </span>
-        </td>
-        ${
-          canManage
-            ? `<td class="text-right">
-                <button type="button" class="btn btn-secondary btn-sm" data-edit-cust="${c.id}">Edit</button>
-              </td>`
-            : ''
-        }
-      </tr>
-    `
-    )
+    .map((c) => {
+      const termDays = Number(c.payment_term_days || 0);
+      const terminText = termDays > 0 ? `Tempo (${termDays} Hari)` : 'Tunai (COD)';
+      return `
+        <tr>
+          <td><strong>${escapeHtml(c.code)}</strong></td>
+          <td>
+            <strong>${escapeHtml(c.name)}</strong>
+            <div class="text-muted" style="font-size:0.8rem;">${escapeHtml(c.address || '-')}</div>
+          </td>
+          <td>${escapeHtml(c.contact_person || '-')} ${c.phone ? '(' + escapeHtml(c.phone) + ')' : ''}</td>
+          <td>${escapeHtml(terminText)}</td>
+          <td class="num">${formatRupiah(c.credit_limit)}</td>
+          <td>
+            <span class="badge ${c.is_active ? 'badge-success' : 'badge-neutral'}">
+              ${c.is_active ? 'Aktif' : 'Nonaktif'}
+            </span>
+          </td>
+          ${
+            canManage
+              ? `<td class="text-right">
+                  <button type="button" class="btn btn-secondary btn-sm" data-edit-cust="${c.id}">Edit</button>
+                </td>`
+              : ''
+          }
+        </tr>
+      `;
+    })
     .join('');
 
   bodyEl.innerHTML = `
@@ -413,8 +433,8 @@ function openCustomerModal(customer, ctx) {
     bodyHtml: `
       <div class="grid-2">
         <div class="form-group">
-          <label class="form-label" for="cust-code">Kode Pelanggan <span class="req">*</span></label>
-          <input type="text" id="cust-code" class="form-control" value="${escapeHtml(customer?.code || '')}" placeholder="Contoh: CUST-001" required />
+          <label class="form-label" for="cust-code">Kode Pelanggan</label>
+          <input type="text" id="cust-code" class="form-control" value="${escapeHtml(customer?.code || '')}" placeholder="Kosongkan untuk kode otomatis" />
         </div>
         <div class="form-group">
           <label class="form-label" for="cust-npwp">NPWP Pelanggan</label>
@@ -435,24 +455,31 @@ function openCustomerModal(customer, ctx) {
           <input type="text" id="cust-phone" class="form-control" value="${escapeHtml(customer?.phone || '')}" />
         </div>
       </div>
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label" for="cust-city">Kota / Wilayah</label>
+          <input type="text" id="cust-city" class="form-control" value="${escapeHtml(customer?.city || '')}" placeholder="Contoh: Cileungsi, Kab. Bogor" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cust-active">Status Pelanggan</label>
+          <select id="cust-active" class="form-control">
+            <option value="true" ${customer?.is_active !== false ? 'selected' : ''}>Aktif</option>
+            <option value="false" ${customer?.is_active === false ? 'selected' : ''}>Nonaktif</option>
+          </select>
+        </div>
+      </div>
       <div class="form-group">
         <label class="form-label" for="cust-address">Alamat Pengiriman Lengkap</label>
         <textarea id="cust-address" class="form-control">${escapeHtml(customer?.address || '')}</textarea>
       </div>
-      <div class="grid-3">
-        <div class="form-group">
-          <label class="form-label" for="cust-paytype">Tipe Pembayaran</label>
-          <select id="cust-paytype" class="form-control">
-            <option value="cash" ${customer?.default_payment_type !== 'credit' ? 'selected' : ''}>Tunai / COD</option>
-            <option value="credit" ${customer?.default_payment_type === 'credit' ? 'selected' : ''}>Kredit / Tempo</option>
-          </select>
-        </div>
+      <div class="grid-2">
         <div class="form-group">
           <label class="form-label" for="cust-term">Termin Kredit (Hari)</label>
-          <input type="number" min="0" id="cust-term" class="form-control" value="${Number(customer?.default_payment_term_days || 0)}" />
+          <input type="number" min="0" id="cust-term" class="form-control" value="${Number(customer?.payment_term_days || 0)}" />
+          <span class="form-help">Isi 0 untuk Tunai/COD, atau jumlah hari tempo (misal: 7, 14, 30).</span>
         </div>
         <div class="form-group">
-          <label class="form-label" for="cust-limit">Batas Kredit (Rp)</label>
+          <label class="form-label" for="cust-limit">Batas Kredit / Piutang (Rp)</label>
           <input type="number" min="0" id="cust-limit" class="form-control" value="${Number(customer?.credit_limit || 0)}" />
         </div>
       </div>
@@ -470,14 +497,15 @@ function openCustomerModal(customer, ctx) {
           npwp: document.getElementById('cust-npwp').value.trim() || null,
           contact_person: document.getElementById('cust-contact').value.trim() || null,
           phone: document.getElementById('cust-phone').value.trim() || null,
+          city: document.getElementById('cust-city').value.trim() || null,
           address: document.getElementById('cust-address').value.trim() || null,
-          default_payment_type: document.getElementById('cust-paytype').value,
-          default_payment_term_days: Number(document.getElementById('cust-term').value || 0),
-          credit_limit: Number(document.getElementById('cust-limit').value || 0)
+          payment_term_days: Number(document.getElementById('cust-term').value || 0),
+          credit_limit: Number(document.getElementById('cust-limit').value || 0),
+          is_active: document.getElementById('cust-active').value === 'true'
         };
 
-        if (!payload.code || !payload.name) {
-          showToast('Kode dan nama toko pelanggan wajib diisi.', 'warning');
+        if (!payload.name) {
+          showToast('Nama toko pelanggan wajib diisi.', 'warning');
           return;
         }
 
@@ -488,7 +516,9 @@ function openCustomerModal(customer, ctx) {
           if (isEdit) {
             unwrapResponse(await supabase.from('customers').update(payload).eq('id', customer.id));
           } else {
-            unwrapResponse(await supabase.from('customers').insert({ ...payload, created_by: ctx.user.id }));
+            unwrapResponse(
+              await supabase.from('customers').insert({ ...payload, created_by: ctx.user.id })
+            );
           }
           closeModal();
           showToast('Data pelanggan berhasil disimpan.', 'success');
@@ -521,7 +551,12 @@ async function renderSuppliersTab(bodyEl, ctx) {
         </td>
         <td>${escapeHtml(s.contact_person || '-')} ${s.phone ? '(' + escapeHtml(s.phone) + ')' : ''}</td>
         <td>${escapeHtml(s.npwp || '-')}</td>
-        <td class="num">${Number(s.default_payment_term_days || 0)} Hari</td>
+        <td class="num">${Number(s.payment_term_days || 0)} Hari</td>
+        <td>
+          <span class="badge ${s.is_active ? 'badge-success' : 'badge-neutral'}">
+            ${s.is_active ? 'Aktif' : 'Nonaktif'}
+          </span>
+        </td>
         ${
           canManage
             ? `<td class="text-right">
@@ -556,6 +591,7 @@ async function renderSuppliersTab(bodyEl, ctx) {
                     <th>Kontak</th>
                     <th>NPWP</th>
                     <th class="num">Termin</th>
+                    <th>Status</th>
                     ${canManage ? '<th class="text-right">Aksi</th>' : ''}
                   </tr>
                 </thead>
@@ -584,8 +620,8 @@ function openSupplierModal(supplier, ctx) {
     bodyHtml: `
       <div class="grid-2">
         <div class="form-group">
-          <label class="form-label" for="supp-code">Kode Supplier <span class="req">*</span></label>
-          <input type="text" id="supp-code" class="form-control" value="${escapeHtml(supplier?.code || '')}" placeholder="Contoh: SUP-MAYORA" required />
+          <label class="form-label" for="supp-code">Kode Supplier</label>
+          <input type="text" id="supp-code" class="form-control" value="${escapeHtml(supplier?.code || '')}" placeholder="Kosongkan untuk kode otomatis" />
         </div>
         <div class="form-group">
           <label class="form-label" for="supp-npwp">NPWP Supplier</label>
@@ -607,12 +643,19 @@ function openSupplierModal(supplier, ctx) {
         </div>
         <div class="form-group">
           <label class="form-label" for="supp-term">Termin Bayar (Hari)</label>
-          <input type="number" min="0" id="supp-term" class="form-control" value="${Number(supplier?.default_payment_term_days || 14)}" />
+          <input type="number" min="0" id="supp-term" class="form-control" value="${Number(supplier?.payment_term_days || 14)}" />
         </div>
       </div>
       <div class="form-group">
         <label class="form-label" for="supp-address">Alamat</label>
         <textarea id="supp-address" class="form-control">${escapeHtml(supplier?.address || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="supp-active">Status Supplier</label>
+        <select id="supp-active" class="form-control">
+          <option value="true" ${supplier?.is_active !== false ? 'selected' : ''}>Aktif</option>
+          <option value="false" ${supplier?.is_active === false ? 'selected' : ''}>Nonaktif</option>
+        </select>
       </div>
     `,
     footerHtml: `
@@ -628,12 +671,13 @@ function openSupplierModal(supplier, ctx) {
           npwp: document.getElementById('supp-npwp').value.trim() || null,
           contact_person: document.getElementById('supp-contact').value.trim() || null,
           phone: document.getElementById('supp-phone').value.trim() || null,
-          default_payment_term_days: Number(document.getElementById('supp-term').value || 0),
-          address: document.getElementById('supp-address').value.trim() || null
+          payment_term_days: Number(document.getElementById('supp-term').value || 0),
+          address: document.getElementById('supp-address').value.trim() || null,
+          is_active: document.getElementById('supp-active').value === 'true'
         };
 
-        if (!payload.code || !payload.name) {
-          showToast('Kode dan nama supplier wajib diisi.', 'warning');
+        if (!payload.name) {
+          showToast('Nama supplier wajib diisi.', 'warning');
           return;
         }
 
@@ -644,7 +688,9 @@ function openSupplierModal(supplier, ctx) {
           if (isEdit) {
             unwrapResponse(await supabase.from('suppliers').update(payload).eq('id', supplier.id));
           } else {
-            unwrapResponse(await supabase.from('suppliers').insert(payload));
+            unwrapResponse(
+              await supabase.from('suppliers').insert({ ...payload, created_by: ctx.user.id })
+            );
           }
           closeModal();
           showToast('Data supplier berhasil disimpan.', 'success');
@@ -673,6 +719,7 @@ async function renderWarehousesTab(bodyEl, ctx) {
         <td><strong>${escapeHtml(w.code)}</strong></td>
         <td><strong>${escapeHtml(w.name)}</strong></td>
         <td>${escapeHtml(w.address || '-')}</td>
+        <td>${escapeHtml(w.phone || '-')}</td>
         <td>
           <span class="badge ${w.is_active ? 'badge-success' : 'badge-neutral'}">
             ${w.is_active ? 'Aktif' : 'Nonaktif'}
@@ -700,20 +747,25 @@ async function renderWarehousesTab(bodyEl, ctx) {
             : ''
         }
       </div>
-      <div class="table-responsive">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Kode</th>
-              <th>Nama Gudang</th>
-              <th>Alamat Lokasi</th>
-              <th>Status</th>
-              ${canManage ? '<th class="text-right">Aksi</th>' : ''}
-            </tr>
-          </thead>
-          <tbody>${rowsHtml}</tbody>
-        </table>
-      </div>
+      ${
+        warehouses.length === 0
+          ? `<div class="card-body">${renderEmptyState('Belum ada lokasi gudang terdaftar.')}</div>`
+          : `<div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Kode</th>
+                    <th>Nama Gudang</th>
+                    <th>Alamat Lokasi</th>
+                    <th>Telepon</th>
+                    <th>Status</th>
+                    ${canManage ? '<th class="text-right">Aksi</th>' : ''}
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+            </div>`
+      }
     </div>
   `;
 
@@ -746,9 +798,15 @@ function openWarehouseModal(warehouse, ctx) {
           </select>
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label" for="wh-name">Nama Gudang <span class="req">*</span></label>
-        <input type="text" id="wh-name" class="form-control" value="${escapeHtml(warehouse?.name || '')}" placeholder="Contoh: Gudang Utama Cileungsi" required />
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label" for="wh-name">Nama Gudang <span class="req">*</span></label>
+          <input type="text" id="wh-name" class="form-control" value="${escapeHtml(warehouse?.name || '')}" placeholder="Contoh: Gudang Utama Cileungsi" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="wh-phone">Telepon Gudang</label>
+          <input type="text" id="wh-phone" class="form-control" value="${escapeHtml(warehouse?.phone || '')}" />
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label" for="wh-address">Alamat Gudang</label>
@@ -765,6 +823,7 @@ function openWarehouseModal(warehouse, ctx) {
         const payload = {
           code: document.getElementById('wh-code').value.trim().toUpperCase(),
           name: document.getElementById('wh-name').value.trim(),
+          phone: document.getElementById('wh-phone').value.trim() || null,
           address: document.getElementById('wh-address').value.trim() || null,
           is_active: document.getElementById('wh-active').value === 'true'
         };
@@ -774,17 +833,23 @@ function openWarehouseModal(warehouse, ctx) {
           return;
         }
 
+        const btn = document.getElementById('wh-save');
+        btn.disabled = true;
+
         try {
           if (isEdit) {
             unwrapResponse(await supabase.from('warehouses').update(payload).eq('id', warehouse.id));
           } else {
-            unwrapResponse(await supabase.from('warehouses').insert(payload));
+            unwrapResponse(
+              await supabase.from('warehouses').insert({ ...payload, created_by: ctx.user.id })
+            );
           }
           closeModal();
           showToast('Data gudang berhasil disimpan.', 'success');
           await loadTabContent(ctx);
         } catch (err) {
           showToast(err.message, 'danger');
+          btn.disabled = false;
         }
       });
     }
@@ -798,7 +863,7 @@ async function renderBanksTab(bodyEl, ctx) {
   const canManage = canPerformAction(ctx.role, 'manage_master_data');
 
   const [banksRes, methodsRes] = await Promise.all([
-    supabase.from('banks').select('*').order('name', { ascending: true }),
+    supabase.from('banks').select('*').order('bank_name', { ascending: true }),
     supabase.from('payment_methods').select('*').order('name', { ascending: true })
   ]);
 
@@ -810,9 +875,21 @@ async function renderBanksTab(bodyEl, ctx) {
       (b) => `
       <tr>
         <td><strong>${escapeHtml(b.code)}</strong></td>
-        <td><strong>${escapeHtml(b.name)}</strong></td>
+        <td><strong>${escapeHtml(b.bank_name)}</strong></td>
         <td>${escapeHtml(b.account_number || '-')}</td>
         <td>${escapeHtml(b.account_holder || '-')}</td>
+        <td>
+          <span class="badge ${b.is_active ? 'badge-success' : 'badge-neutral'}">
+            ${b.is_active ? 'Aktif' : 'Nonaktif'}
+          </span>
+        </td>
+        ${
+          canManage
+            ? `<td class="text-right">
+                <button type="button" class="btn btn-secondary btn-sm" data-edit-bank="${b.id}">Edit</button>
+              </td>`
+            : ''
+        }
       </tr>
     `
     )
@@ -825,6 +902,11 @@ async function renderBanksTab(bodyEl, ctx) {
         <td><strong>${escapeHtml(m.code)}</strong></td>
         <td>${escapeHtml(m.name)}</td>
         <td>${escapeHtml(m.method_type)}</td>
+        <td>
+          <span class="badge ${m.is_active ? 'badge-success' : 'badge-neutral'}">
+            ${m.is_active ? 'Aktif' : 'Nonaktif'}
+          </span>
+        </td>
       </tr>
     `
     )
@@ -834,7 +916,7 @@ async function renderBanksTab(bodyEl, ctx) {
     <div class="grid-2">
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title">Rekening Bank Perusahaan</h3>
+          <h3 class="card-title">Rekening Bank Perusahaan (${banks.length})</h3>
           ${
             canManage
               ? `<button type="button" class="btn btn-primary btn-sm" id="btn-add-bank">+ Tambah Bank</button>`
@@ -852,6 +934,8 @@ async function renderBanksTab(bodyEl, ctx) {
                       <th>Nama Bank</th>
                       <th>No. Rekening</th>
                       <th>Atas Nama</th>
+                      <th>Status</th>
+                      ${canManage ? '<th class="text-right">Aksi</th>' : ''}
                     </tr>
                   </thead>
                   <tbody>${bankRows}</tbody>
@@ -862,52 +946,71 @@ async function renderBanksTab(bodyEl, ctx) {
 
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title">Metode Pembayaran Aktif</h3>
+          <h3 class="card-title">Metode Pembayaran Aktif (${methods.length})</h3>
         </div>
-        <div class="table-responsive">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Kode</th>
-                <th>Nama Metode</th>
-                <th>Tipe</th>
-              </tr>
-            </thead>
-            <tbody>${methodRows}</tbody>
-          </table>
-        </div>
+        ${
+          methods.length === 0
+            ? `<div class="card-body">${renderEmptyState('Belum ada metode pembayaran terdaftar.')}</div>`
+            : `<div class="table-responsive">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Kode</th>
+                      <th>Nama Metode</th>
+                      <th>Tipe</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>${methodRows}</tbody>
+                </table>
+              </div>`
+        }
       </div>
     </div>
   `;
 
   if (canManage) {
-    document.getElementById('btn-add-bank')?.addEventListener('click', () => openBankModal(ctx));
+    document.getElementById('btn-add-bank')?.addEventListener('click', () => openBankModal(null, ctx));
+    bodyEl.querySelectorAll('[data-edit-bank]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const bank = banks.find((item) => item.id === btn.getAttribute('data-edit-bank'));
+        if (bank) openBankModal(bank, ctx);
+      });
+    });
   }
 }
 
-function openBankModal(ctx) {
+function openBankModal(bank, ctx) {
+  const isEdit = Boolean(bank);
   openModal({
-    title: 'Tambah Rekening Bank Perusahaan',
+    title: isEdit ? `Edit Rekening: ${bank.bank_name}` : 'Tambah Rekening Bank Perusahaan',
     bodyHtml: `
       <div class="grid-2">
         <div class="form-group">
           <label class="form-label" for="bk-code">Kode Bank <span class="req">*</span></label>
-          <input type="text" id="bk-code" class="form-control" placeholder="Contoh: BCA-01" required />
+          <input type="text" id="bk-code" class="form-control" value="${escapeHtml(bank?.code || '')}" placeholder="Contoh: BCA-01" required />
         </div>
         <div class="form-group">
           <label class="form-label" for="bk-name">Nama Bank <span class="req">*</span></label>
-          <input type="text" id="bk-name" class="form-control" placeholder="Contoh: Bank BCA" required />
+          <input type="text" id="bk-name" class="form-control" value="${escapeHtml(bank?.bank_name || '')}" placeholder="Contoh: Bank BCA" required />
         </div>
       </div>
       <div class="grid-2">
         <div class="form-group">
           <label class="form-label" for="bk-num">Nomor Rekening <span class="req">*</span></label>
-          <input type="text" id="bk-num" class="form-control" required />
+          <input type="text" id="bk-num" class="form-control" value="${escapeHtml(bank?.account_number || '')}" required />
         </div>
         <div class="form-group">
           <label class="form-label" for="bk-holder">Nama Pemilik Rekening <span class="req">*</span></label>
-          <input type="text" id="bk-holder" class="form-control" value="PT Toya Jaya Darma" required />
+          <input type="text" id="bk-holder" class="form-control" value="${escapeHtml(bank?.account_holder || 'PT Toya Jaya Darma')}" required />
         </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="bk-active">Status Rekening</label>
+        <select id="bk-active" class="form-control">
+          <option value="true" ${bank?.is_active !== false ? 'selected' : ''}>Aktif</option>
+          <option value="false" ${bank?.is_active === false ? 'selected' : ''}>Nonaktif</option>
+        </select>
       </div>
     `,
     footerHtml: `
@@ -921,28 +1024,37 @@ function openBankModal(ctx) {
           .from('chart_of_accounts')
           .select('id')
           .eq('code', '1102')
-          .single();
+          .maybeSingle();
 
         const payload = {
           code: document.getElementById('bk-code').value.trim().toUpperCase(),
-          name: document.getElementById('bk-name').value.trim(),
+          bank_name: document.getElementById('bk-name').value.trim(),
           account_number: document.getElementById('bk-num').value.trim(),
           account_holder: document.getElementById('bk-holder').value.trim(),
-          account_id: bankCoa?.id
+          account_id: bankCoa?.id || null,
+          is_active: document.getElementById('bk-active').value === 'true'
         };
 
-        if (!payload.code || !payload.name || !payload.account_number) {
-          showToast('Kode, nama bank, dan nomor rekening wajib diisi.', 'warning');
+        if (!payload.code || !payload.bank_name || !payload.account_number || !payload.account_holder) {
+          showToast('Kode, nama bank, nomor rekening, dan pemilik rekening wajib diisi.', 'warning');
           return;
         }
 
+        const btn = document.getElementById('bk-save');
+        btn.disabled = true;
+
         try {
-          unwrapResponse(await supabase.from('banks').insert(payload));
+          if (isEdit) {
+            unwrapResponse(await supabase.from('banks').update(payload).eq('id', bank.id));
+          } else {
+            unwrapResponse(await supabase.from('banks').insert(payload));
+          }
           closeModal();
-          showToast('Rekening bank berhasil ditambahkan.', 'success');
+          showToast('Rekening bank berhasil disimpan.', 'success');
           await loadTabContent(ctx);
         } catch (err) {
           showToast(err.message, 'danger');
+          btn.disabled = false;
         }
       });
     }
