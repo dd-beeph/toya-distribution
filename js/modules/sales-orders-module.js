@@ -73,15 +73,23 @@ async function loadSalesOrders(ctx) {
   listEl.innerHTML = renderLoadingState();
 
   try {
-    const [custRes, whRes, profRes] = await Promise.all([
+    const [custRes, whRes, profRes, rolesRes] = await Promise.all([
       supabase.from('customers').select('id, code, name').order('name'),
       supabase.from('warehouses').select('id, code, name').order('name'),
-      supabase.from('profiles').select('id, full_name, role')
+      supabase.from('profiles').select('id, full_name'),
+      supabase.from('user_roles').select('user_id, role')
     ]);
 
     const customers = unwrapResponse(custRes) || [];
     const warehouses = unwrapResponse(whRes) || [];
-    const profiles = unwrapResponse(profRes) || [];
+    const rawProfiles = unwrapResponse(profRes) || [];
+    const roleRows = rolesRes.error ? [] : rolesRes.data || [];
+
+    const roleByUserId = new Map(roleRows.map((r) => [r.user_id, r.role]));
+    const profiles = rawProfiles.map((p) => ({
+      ...p,
+      role: roleByUserId.get(p.id) || ''
+    }));
 
     const custMap = new Map(customers.map((c) => [c.id, c.name]));
     const whMap = new Map(warehouses.map((w) => [w.id, w.name]));
@@ -279,7 +287,7 @@ function resolveTaxRates(taxCode) {
   const typeLower = (taxCode.tax_type || '').toLowerCase();
   const nameLower = (taxCode.name || '').toLowerCase();
 
-  if (typeLower.includes('non') || codeUpper.includes('NON') || codeUpper === ' bebas') {
+  if (typeLower.includes('non') || codeUpper.includes('NON') || codeUpper === 'BEBAS') {
     return { ratePercent: 0, dppMultiplier: 1 };
   }
   if (typeLower.includes('nilai_lain') || codeUpper.includes('DPP') || nameLower.includes('11/12')) {
@@ -293,7 +301,8 @@ function calculateLinePreview(item, ppnMode) {
   const price = Number(item.unit_price || 0);
   const discPct = Number(item.discount_percent || 0);
   const gross = Math.round(qty * price * 100) / 100;
-  const discAmt = discPct > 0 ? Math.round(gross * (discPct / 100) * 100) / 100 : Number(item.discount_amount || 0);
+  const discAmt =
+    discPct > 0 ? Math.round(gross * (discPct / 100) * 100) / 100 : Number(item.discount_amount || 0);
   const net = Math.max(0, gross - discAmt);
 
   const rate = Number(item.tax_rate_percent || 0);
@@ -319,17 +328,23 @@ function calculateLinePreview(item, ppnMode) {
 async function openSalesOrderFormModal(existingSo, ctx) {
   const isEdit = Boolean(existingSo);
 
-  const [custRes, whRes, prodRes, unitRes, taxRes, balRes, existingItemsRes] = await Promise.all([
-    supabase.from('customers').select('*').eq('is_active', true).order('name'),
-    supabase.from('warehouses').select('id, code, name').eq('is_active', true).order('name'),
-    supabase.from('products').select('*').eq('is_active', true).order('name'),
-    supabase.from('units').select('id, code, name'),
-    supabase.from('tax_codes').select('*').eq('is_active', true),
-    supabase.from('stock_balances').select('warehouse_id, product_id, qty_on_hand'),
-    isEdit
-      ? supabase.from('sales_order_items').select('*').eq('sales_order_id', existingSo.id)
-      : Promise.resolve({ data: [], error: null })
-  ]);
+  const [custRes, whRes, prodRes, unitRes, taxRes, balRes, settingRes, existingItemsRes] =
+    await Promise.all([
+      supabase.from('customers').select('*').eq('is_active', true).order('name'),
+      supabase.from('warehouses').select('id, code, name').eq('is_active', true).order('name'),
+      supabase.from('products').select('*').eq('is_active', true).order('name'),
+      supabase.from('units').select('id, code, name'),
+      supabase.from('tax_codes').select('*').eq('is_active', true),
+      supabase.from('stock_balances').select('warehouse_id, product_id, qty_on_hand'),
+      supabase
+        .from('system_settings')
+        .select('setting_value')
+        .eq('setting_key', 'ppn_sales_price_mode')
+        .maybeSingle(),
+      isEdit
+        ? supabase.from('sales_order_items').select('*').eq('sales_order_id', existingSo.id)
+        : Promise.resolve({ data: [], error: null })
+    ]);
 
   const customers = unwrapResponse(custRes) || [];
   const warehouses = unwrapResponse(whRes) || [];
@@ -343,6 +358,10 @@ async function openSalesOrderFormModal(existingSo, ctx) {
     showToast('Pastikan Pelanggan, Gudang, dan Produk aktif sudah tersedia di Data Master.', 'warning');
     return;
   }
+
+  const ppnCfg = settingRes?.data?.setting_value || {};
+  const systemPpnMode = ppnCfg.enabled ? ppnCfg.mode || 'exclude_ppn' : 'non_ppn';
+  const activePpnMode = existingSo?.ppn_mode_snapshot || systemPpnMode;
 
   const custMap = new Map(customers.map((c) => [c.id, c]));
   const prodMap = new Map(products.map((p) => [p.id, p]));
@@ -407,6 +426,8 @@ async function openSalesOrderFormModal(existingSo, ctx) {
     title: isEdit ? `Edit Draft Sales Order: ${existingSo.so_number}` : 'Buat Sales Order (SO) Baru',
     size: 'lg',
     bodyHtml: `
+      <div id="so-modal-error" class="alert alert-danger hidden"></div>
+
       <div class="grid-3">
         <div class="form-group">
           <label class="form-label" for="so-date">Tanggal Order <span class="req">*</span></label>
@@ -443,11 +464,11 @@ async function openSalesOrderFormModal(existingSo, ctx) {
 
       <div class="grid-2">
         <div class="form-group">
-          <label class="form-label" for="so-ppn-mode">Perhitungan PPN</label>
-          <select id="so-ppn-mode" class="form-control">
-            <option value="include_ppn" ${(existingSo?.ppn_mode_snapshot || 'include_ppn') === 'include_ppn' ? 'selected' : ''}>Harga Sudah Termasuk PPN (Include PPN)</option>
-            <option value="exclude_ppn" ${existingSo?.ppn_mode_snapshot === 'exclude_ppn' ? 'selected' : ''}>Harga Belum Termasuk PPN (Exclude PPN)</option>
-            <option value="non_ppn" ${existingSo?.ppn_mode_snapshot === 'non_ppn' ? 'selected' : ''}>Tanpa PPN (Non-PPN)</option>
+          <label class="form-label" for="so-ppn-mode">Mode PPN Aktif (Sesuai Pengaturan)</label>
+          <select id="so-ppn-mode" class="form-control" disabled>
+            <option value="include_ppn" ${activePpnMode === 'include_ppn' ? 'selected' : ''}>Harga Sudah Termasuk PPN (Include PPN)</option>
+            <option value="exclude_ppn" ${activePpnMode === 'exclude_ppn' ? 'selected' : ''}>Harga Belum Termasuk PPN (Exclude PPN)</option>
+            <option value="non_ppn" ${activePpnMode === 'non_ppn' ? 'selected' : ''}>Tanpa PPN (Non-PPN)</option>
           </select>
         </div>
         <div class="form-group">
@@ -501,6 +522,22 @@ async function openSalesOrderFormModal(existingSo, ctx) {
       const custLimitInfo = document.getElementById('so-cust-limit-info');
       const discReasonWrap = document.getElementById('so-disc-reason-wrap');
       const summaryEl = document.getElementById('so-totals-summary');
+      const modalErrEl = document.getElementById('so-modal-error');
+
+      const showModalError = (msg) => {
+        if (modalErrEl) {
+          modalErrEl.textContent = msg;
+          modalErrEl.classList.remove('hidden');
+        }
+        showToast(msg, 'danger');
+      };
+
+      const clearModalError = () => {
+        if (modalErrEl) {
+          modalErrEl.textContent = '';
+          modalErrEl.classList.add('hidden');
+        }
+      };
 
       const updateCustomerInfo = (applyDefaults = false) => {
         const c = custMap.get(custSelect.value);
@@ -665,8 +702,6 @@ async function openSalesOrderFormModal(existingSo, ctx) {
       renderLines();
 
       whSelect.addEventListener('change', renderLines);
-      ppnModeSelect.addEventListener('change', updateTotals);
-
       document.getElementById('so-add-line')?.addEventListener('click', () => {
         lineItems.push(makeDefaultLine(products[0]));
         renderLines();
@@ -675,8 +710,10 @@ async function openSalesOrderFormModal(existingSo, ctx) {
       document.getElementById('so-cancel-modal')?.addEventListener('click', closeModal);
 
       const handlePersist = async (shouldSubmit) => {
+        clearModalError();
+
         if (lineItems.length === 0) {
-          showToast('Sales Order wajib memiliki minimal satu produk.', 'warning');
+          showModalError('Sales Order wajib memiliki minimal satu produk.');
           return;
         }
 
@@ -689,7 +726,7 @@ async function openSalesOrderFormModal(existingSo, ctx) {
 
         for (const it of lineItems) {
           if (!it.product_id || it.qty <= 0 || it.unit_price < 0) {
-            showToast('Periksa kembali produk, kuantitas (minimal 1), dan harga satuan.', 'warning');
+            showModalError('Periksa kembali produk, kuantitas (minimal 1), dan harga satuan.');
             return;
           }
           const c = calculateLinePreview(it, ppnMode);
@@ -702,7 +739,7 @@ async function openSalesOrderFormModal(existingSo, ctx) {
 
         const discReason = document.getElementById('so-disc-reason').value.trim();
         if (discountTotal > 0 && !discReason) {
-          showToast('Alasan pengajuan diskon wajib diisi.', 'warning');
+          showModalError('Alasan pengajuan diskon wajib diisi.');
           return;
         }
 
@@ -789,7 +826,7 @@ async function openSalesOrderFormModal(existingSo, ctx) {
 
           await loadSalesOrders(ctx);
         } catch (err) {
-          showToast(err.message, 'danger');
+          showModalError(err.message);
           btnDraft.disabled = false;
           btnSubmit.disabled = false;
         }
@@ -853,7 +890,7 @@ async function openSalesOrderDetailModal(so, custMap, whMap, profMap, allProfile
     })
     .join('');
 
-  const salesProfiles = allProfiles.filter((p) => ['sales', 'owner'].includes(p.role));
+  const salesProfiles = allProfiles.filter((p) => ['sales', 'owner', ''].includes(p.role));
   const salesOpts = salesProfiles
     .map(
       (p) =>
